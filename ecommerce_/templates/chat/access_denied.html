@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+
+{% block title %}Access Denied - Online Shop{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card text-center">
+                <div class="card-header bg-danger text-white">
+                    <h3 class="mb-0">Access Denied</h3>
+                </div>
+                <div class="card-body py-5">
+                    <i class="fas fa-exclamation-triangle fa-4x text-danger mb-4"></i>
+                    <h4>You don't have permission to access this chat</h4>
+                    <p class="text-muted">You can only access chats that you've initiated or that have been assigned to you as a support agent.</p>
+                    <a href="{% url 'chat_home' %}" class="btn btn-primary mt-3">
+                        <i class="fas fa-arrow-left me-2"></i>Return to Chat Home
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

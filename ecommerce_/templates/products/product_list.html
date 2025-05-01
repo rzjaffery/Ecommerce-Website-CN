@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+
+{% block title %}
+    {% if category %}{{ category.name }}{% else %}All Products{% endif %} - Online Shop
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Sidebar with categories -->
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">Categories</h5>
+            </div>
+            <div class="list-group list-group-flush">
+                <a href="{% url 'product_list' %}" class="list-group-item list-group-item-action {% if not category %}active{% endif %}">
+                    All Products
+                </a>
+                {% for c in categories %}
+                <a href="{% url 'category_detail' c.slug %}" class="list-group-item list-group-item-action {% if category.id == c.id %}active{% endif %}">
+                    {{ c.name }}
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Product listings -->
+    <div class="col-md-9">
+        <!-- Title and search results -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>
+                {% if category %}
+                    {{ category.name }}
+                {% elif search_query %}
+                    Search results for "{{ search_query }}"
+                {% else %}
+                    All Products
+                {% endif %}
+            </h2>
+            {% if search_query %}
+            <span class="text-muted">{{ products.count }} result(s) found</span>
+            {% endif %}
+        </div>
+        
+        <!-- Products grid -->
+        <div class="row">
+            {% for product in products %}
+            <div class="col-md-4 mb-4">
+                <div class="card h-100">
+                    {% if product.image %}
+                    <img src="{{ product.image.url }}" alt="{{ product.name }}" class="card-img-top" style="height: 200px; object-fit: cover;">
+                    {% else %}
+                    <img src="https://via.placeholder.com/300x200?text=No+Image" alt="No Image" class="card-img-top">
+                    {% endif %}
+                    <div class="card-body d-flex flex-column">
+                        <h5 class="card-title">{{ product.name }}</h5>
+                        <p class="card-text text-muted">{{ product.category.name }}</p>
+                        <p class="card-text">{{ product.description|truncatewords:10 }}</p>
+                        <div class="mt-auto">
+                            <p class="fw-bold text-primary">${{ product.price }}</p>
+                            <div class="d-flex">
+                                <a href="{% url 'product_detail' product.slug %}" class="btn btn-sm btn-outline-primary flex-grow-1 me-2">View Details</a>
+                                <form action="{% url 'add_to_cart' product.id %}" method="post" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-primary">
+                                        <i class="fas fa-shopping-cart"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% empty %}
+            <div class="col-12 text-center py-5">
+                <i class="fas fa-search fa-3x mb-3 text-muted"></i>
+                <h3>No products found</h3>
+                {% if search_query %}
+                <p>We couldn't find any products matching "{{ search_query }}".</p>
+                {% else %}
+                <p>There are no products available in this category yet.</p>
+                {% endif %}
+                <a href="{% url 'product_list' %}" class="btn btn-primary mt-3">View All Products</a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %} 

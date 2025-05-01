@@ -1,0 +1,439 @@
+{% extends 'base.html' %}
+
+{% block title %}Chat with {{ room.user.username }} - Online Shop{% endblock %}
+
+{% block extra_css %}
+<style>
+    .chat-container {
+        height: 70vh;
+        display: flex;
+        flex-direction: column;
+    }
+    .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+    }
+    .message {
+        margin-bottom: 1rem;
+        max-width: 75%;
+    }
+    .message.sent {
+        margin-left: auto;
+        background-color: #007bff;
+        color: white;
+        border-radius: 1rem 0 1rem 1rem;
+    }
+    .message.received {
+        margin-right: auto;
+        background-color: #f1f1f1;
+        border-radius: 0 1rem 1rem 1rem;
+    }
+    .message-content {
+        padding: 0.75rem;
+    }
+    .message-timestamp {
+        font-size: 0.7rem;
+        margin-top: 0.25rem;
+        opacity: 0.7;
+    }
+    .typing-indicator {
+        padding: 0.5rem;
+        display: none;
+    }
+    .typing-indicator.active {
+        display: block;
+    }
+    .chat-input {
+        border-top: 1px solid #dee2e6;
+        padding: 1rem;
+        background-color: #f8f9fa;
+    }
+    .user-info {
+        font-size: 0.9rem;
+    }
+    .system-message {
+        text-align: center;
+        margin: 1rem 0;
+        font-size: 0.9rem;
+        color: #6c757d;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row mb-3">
+        <div class="col-md-8">
+            <h2>Chat: {{ room.name }}</h2>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{% url 'chat_home' %}" class="btn btn-outline-primary">
+                <i class="fas fa-arrow-left me-2"></i>Back to Chats
+            </a>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card chat-container">
+                <div class="chat-messages" id="chatMessages">
+                    {% for message in messages %}
+                        <div class="message {% if message.sender == request.user %}sent{% else %}received{% endif %}">
+                            <div class="message-content">
+                                {{ message.message }}
+                                <div class="message-timestamp">
+                                    {{ message.sender.username }} • {{ message.timestamp|date:"M d, Y H:i" }}
+                                </div>
+                            </div>
+                        </div>
+                    {% empty %}
+                        <div class="system-message">
+                            This is the beginning of your conversation.
+                        </div>
+                    {% endfor %}
+                    <div class="typing-indicator" id="typingIndicator">
+                        <span id="typingUser"></span> is typing...
+                    </div>
+                </div>
+                <div class="chat-input">
+                    <form id="chatForm" class="d-flex">
+                        <input type="text" class="form-control me-2" id="messageInput" placeholder="Type your message..." required>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Chat Information</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <h6>Topic</h6>
+                        <p>{{ room.name }}</p>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <h6>{% if is_support %}Customer{% else %}Support Agent{% endif %}</h6>
+                        <p class="user-info">
+                            {% if is_support %}
+                                {{ room.user.username }}
+                                {% if room.user.email %}
+                                    <br>{{ room.user.email }}
+                                {% endif %}
+                            {% else %}
+                                {% if room.support_staff %}
+                                    {{ room.support_staff.username }}
+                                {% else %}
+                                    <span class="text-muted">Waiting for support staff...</span>
+                                {% endif %}
+                            {% endif %}
+                        </p>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <h6>Started</h6>
+                        <p>{{ room.created_at|date:"M d, Y H:i" }}</p>
+                    </div>
+                    
+                    {% if is_support %}
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-success" id="resolveBtn">
+                            <i class="fas fa-check me-2"></i>Mark as Resolved
+                        </button>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const roomId = "{{ room.room_id }}";
+        const wsToken = "{{ ws_token }}";
+        const userId = parseInt("{{ request.user.id }}");
+        const username = "{{ request.user.username }}";
+        const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+        const wsUrl = `${wsScheme}://${window.location.host}/ws/chat/${roomId}/?token=${wsToken}`;
+        
+        let chatSocket;
+        let typingTimeout;
+        let isConnected = false;
+        
+        // Initialize DOM elements
+        const chatMessages = document.getElementById('chatMessages');
+        const chatForm = document.getElementById('chatForm');
+        const messageInput = document.getElementById('messageInput');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const typingUser = document.getElementById('typingUser');
+        const resolveBtn = document.getElementById('resolveBtn');
+        
+        // Initialize event listeners
+        chatForm.addEventListener('submit', sendMessage);
+        messageInput.addEventListener('input', sendTypingStatus);
+        
+        if (resolveBtn) {
+            resolveBtn.addEventListener('click', resolveChat);
+        }
+        
+        // Connect to WebSocket
+        connectWebSocket();
+        
+        // Mark messages as read
+        markMessagesAsRead();
+        
+        // Scroll to bottom of chat
+        scrollToBottom();
+        
+        function connectWebSocket() {
+            console.log("Connecting to WebSocket at:", wsUrl);
+            
+            try {
+                chatSocket = new WebSocket(wsUrl);
+                
+                chatSocket.onopen = function(e) {
+                    console.log('WebSocket connection established');
+                    isConnected = true;
+                };
+                
+                chatSocket.onmessage = function(e) {
+                    const data = JSON.parse(e.data);
+                    
+                    switch(data.type) {
+                        case 'chat_message':
+                            receiveMessage(data);
+                            break;
+                        case 'user_join':
+                            userJoinedChat(data);
+                            break;
+                        case 'user_leave':
+                            userLeftChat(data);
+                            break;
+                        case 'user_typing':
+                            userTyping(data);
+                            break;
+                    }
+                };
+                
+                chatSocket.onclose = function(e) {
+                    console.log('WebSocket connection closed');
+                    isConnected = false;
+                    
+                    // Try to reconnect after 5 seconds
+                    setTimeout(function() {
+                        if (!isConnected) {
+                            connectWebSocket();
+                        }
+                    }, 5000);
+                };
+                
+                chatSocket.onerror = function(err) {
+                    console.error('WebSocket error:', err);
+                    // Close socket and try to reconnect
+                    chatSocket.close();
+                };
+            } catch (error) {
+                console.error('WebSocket connection error:', error);
+            }
+        }
+        
+        function sendMessage(e) {
+            e.preventDefault();
+            
+            const message = messageInput.value.trim();
+            if (message === '') return;
+            
+            const messageData = {
+                'type': 'chat_message',
+                'message': message
+            };
+            
+            if (isConnected) {
+                chatSocket.send(JSON.stringify(messageData));
+                // Clear input after sending
+                messageInput.value = '';
+                // Stop typing indicator
+                sendTypingStatus(false);
+                // Focus back on input
+                messageInput.focus();
+            } else {
+                alert('You are currently disconnected. Please wait while we try to reconnect.');
+            }
+        }
+        
+        function receiveMessage(data) {
+            // Hide typing indicator when message is received
+            typingIndicator.classList.remove('active');
+            
+            // Create message element
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message');
+            
+            // Check if the message is from the current user
+            if (data.user_id === userId) {
+                messageDiv.classList.add('sent');
+            } else {
+                messageDiv.classList.add('received');
+            }
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.classList.add('message-content');
+            contentDiv.textContent = data.message;
+            
+            const timestampDiv = document.createElement('div');
+            timestampDiv.classList.add('message-timestamp');
+            
+            // Format timestamp
+            const timestamp = new Date(data.timestamp);
+            const formattedDate = `${timestamp.toLocaleString('default', { month: 'short' })} ${timestamp.getDate()}, ${timestamp.getFullYear()} ${timestamp.getHours()}:${String(timestamp.getMinutes()).padStart(2, '0')}`;
+            
+            timestampDiv.textContent = `${data.username} • ${formattedDate}`;
+            
+            contentDiv.appendChild(timestampDiv);
+            messageDiv.appendChild(contentDiv);
+            
+            // Append to chat messages
+            chatMessages.appendChild(messageDiv);
+            
+            // Scroll to bottom
+            scrollToBottom();
+            
+            // Mark message as read if it's not from current user
+            if (data.user_id !== userId) {
+                markMessagesAsRead();
+            }
+        }
+        
+        function userJoinedChat(data) {
+            if (data.user_id !== userId) {
+                const systemMessage = document.createElement('div');
+                systemMessage.classList.add('system-message');
+                systemMessage.textContent = `${data.username} joined the chat`;
+                chatMessages.appendChild(systemMessage);
+                scrollToBottom();
+            }
+        }
+        
+        function userLeftChat(data) {
+            if (data.user_id !== userId) {
+                const systemMessage = document.createElement('div');
+                systemMessage.classList.add('system-message');
+                systemMessage.textContent = `${data.username} left the chat`;
+                chatMessages.appendChild(systemMessage);
+                scrollToBottom();
+            }
+        }
+        
+        function userTyping(data) {
+            if (data.user_id !== userId) {
+                if (data.is_typing) {
+                    typingUser.textContent = data.username;
+                    typingIndicator.classList.add('active');
+                } else {
+                    typingIndicator.classList.remove('active');
+                }
+                scrollToBottom();
+            }
+        }
+        
+        function sendTypingStatus() {
+            if (typingTimeout) {
+                clearTimeout(typingTimeout);
+            }
+            
+            // Send typing indicator
+            if (isConnected) {
+                chatSocket.send(JSON.stringify({
+                    'type': 'typing',
+                    'is_typing': true
+                }));
+            }
+            
+            // Set timeout to clear typing indicator after 2 seconds of inactivity
+            typingTimeout = setTimeout(function() {
+                if (isConnected) {
+                    chatSocket.send(JSON.stringify({
+                        'type': 'typing',
+                        'is_typing': false
+                    }));
+                }
+            }, 2000);
+        }
+        
+        function markMessagesAsRead() {
+            fetch('/chat/api/messages/mark_read/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({
+                    'room_id': roomId
+                })
+            })
+            .then(response => response.json())
+            .catch(error => console.error('Error marking messages as read:', error));
+        }
+        
+        function resolveChat() {
+            if (confirm('Are you sure you want to mark this chat as resolved? This will close the chat.')) {
+                fetch(`/chat/api/rooms/${roomId}/close/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken')
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Send a system message that the chat has been resolved
+                    if (isConnected) {
+                        chatSocket.send(JSON.stringify({
+                            'type': 'chat_message',
+                            'message': '[This chat has been marked as resolved and is now closed]'
+                        }));
+                    }
+                    
+                    // Redirect back to chat home after a short delay
+                    setTimeout(function() {
+                        window.location.href = '{% url "chat_home" %}';
+                    }, 2000);
+                })
+                .catch(error => {
+                    console.error('Error resolving chat:', error);
+                    alert('There was an error resolving this chat. Please try again.');
+                });
+            }
+        }
+        
+        function scrollToBottom() {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Utility function to get CSRF token from cookies
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+    });
+</script>
+{% endblock %} 

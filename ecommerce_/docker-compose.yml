@@ -1,0 +1,118 @@
+version: '3'
+
+services:
+  # Database service
+  db:
+    image: mysql:8.0
+    volumes:
+      - db_data:/var/lib/mysql
+    restart: always
+    environment:
+      MYSQL_DATABASE: ecommerce_db
+      MYSQL_USER: root
+      MYSQL_PASSWORD: fast1234
+      MYSQL_ROOT_PASSWORD: fast1234
+    ports:
+      - "3306:3306"
+    networks:
+      - ecommerce_network
+
+  # Redis for caching and channels
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ecommerce_network
+
+  # Web server 1 - Main instance
+  web1:
+    build: .
+    command: daphne -b 0.0.0.0 -p 8000 ecommerce.asgi:application
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DJANGO_SETTINGS_MODULE=ecommerce.settings
+      - DATABASE_URL=mysql://root:fast1234@db:3306/ecommerce_db
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_ID=1
+    networks:
+      - ecommerce_network
+    restart: always
+
+  # Web server 2 - Duplicated instance for load balancing
+  web2:
+    build: .
+    command: daphne -b 0.0.0.0 -p 8001 ecommerce.asgi:application
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DJANGO_SETTINGS_MODULE=ecommerce.settings
+      - DATABASE_URL=mysql://root:fast1234@db:3306/ecommerce_db
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_ID=2
+    networks:
+      - ecommerce_network
+    restart: always
+
+  # Web server 3 - Another instance for load balancing
+  web3:
+    build: .
+    command: daphne -b 0.0.0.0 -p 8002 ecommerce.asgi:application
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    depends_on:
+      - db
+      - redis
+    environment:
+      - DJANGO_SETTINGS_MODULE=ecommerce.settings
+      - DATABASE_URL=mysql://root:fast1234@db:3306/ecommerce_db
+      - REDIS_URL=redis://redis:6379/0
+      - SERVER_ID=3
+    networks:
+      - ecommerce_network
+    restart: always
+
+  # NGINX as reverse proxy and load balancer
+  nginx:
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    depends_on:
+      - web1
+      - web2
+      - web3
+    networks:
+      - ecommerce_network
+    restart: always
+
+networks:
+  ecommerce_network:
+    driver: bridge
+
+volumes:
+  db_data:
+  redis_data:
+  static_volume:
+  media_volume: 
